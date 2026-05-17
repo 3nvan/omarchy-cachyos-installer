@@ -7,6 +7,28 @@ trap 'echo "Error: Script failed at line $LINENO" | tee -a "$LOG_FILE"; exit 1' 
 LOG_FILE="${HOME}/.local/share/omarchy/install.log"
 mkdir -p "$(dirname "$LOG_FILE")"
 
+# Detect if running as root via sudo
+if [ "$(id -u)" -eq 0 ]; then
+    if [ -n "$SUDO_USER" ]; then
+        ORIGINAL_USER="$SUDO_USER"
+        ORIGINAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+        LOG_FILE="${ORIGINAL_HOME}/.local/share/omarchy/install.log"
+        mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+    else
+        echo "Error: Run with sudo, not as root directly" >&2
+        exit 1
+    fi
+fi
+
+# Run a command as the original user (no-op if not root)
+run_as_user() {
+    if [ "$(id -u)" -eq 0 ] && [ -n "$ORIGINAL_USER" ]; then
+        sudo -u "$ORIGINAL_USER" HOME="$ORIGINAL_HOME" "$@"
+    else
+        "$@"
+    fi
+}
+
 # Helper function to run commands with logging
 run_logged() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
@@ -51,7 +73,7 @@ git_clone_and_build() {
         return 0
     fi
     
-    if ! git clone "$repo_url" "$target_dir" >> "$LOG_FILE" 2>&1; then
+    if ! run_as_user git clone "$repo_url" "$target_dir" >> "$LOG_FILE" 2>&1; then
         echo "Error: Failed to clone $repo_url" | tee -a "$LOG_FILE"
         return 1
     fi
@@ -69,7 +91,7 @@ git_clone_and_build() {
         cd "$target_dir" || { echo "Error: Failed to navigate to $target_dir" | tee -a "$LOG_FILE"; return 1; }
         
         echo "Building $target_dir..." | tee -a "$LOG_FILE"
-        if eval "$build_cmd" >> "$LOG_FILE" 2>&1; then
+        if run_as_user bash -c "$build_cmd" >> "$LOG_FILE" 2>&1; then
             echo "✓ Build successful" | tee -a "$LOG_FILE"
         else
             echo "Error: Build failed" | tee -a "$LOG_FILE"
@@ -129,10 +151,12 @@ if ! command -v git &> /dev/null; then
     exit 1
 fi
 
-# Check if sudo access is available
-if ! sudo -n true 2>/dev/null; then
-    echo "Error: This script requires sudo privileges. Please ensure sudo is configured for your user." | tee -a "$LOG_FILE"
-    exit 1
+# Check if sudo access is available (skip if already root)
+if [ "$(id -u)" -ne 0 ]; then
+    if ! sudo -n true 2>/dev/null; then
+        echo "Error: This script requires sudo privileges. Please ensure sudo is configured for your user." | tee -a "$LOG_FILE"
+        exit 1
+    fi
 fi
 
 # Check network connectivity before proceeding
@@ -241,11 +265,11 @@ fi
 
 # Copy omarchy installation files to ~/.local/share/omarchy
 LOCAL_OMARCHY_DIR="${XDG_DATA_HOME:=$HOME/.local/share}/omarchy"
-mkdir -p "$LOCAL_OMARCHY_DIR" || { echo "Error: Failed to create $LOCAL_OMARCHY_DIR" | tee -a "$LOG_FILE"; exit 1; }
+run_as_user mkdir -p "$LOCAL_OMARCHY_DIR" || { echo "Error: Failed to create $LOCAL_OMARCHY_DIR" | tee -a "$LOG_FILE"; exit 1; }
 
 echo "Copying Omarchy files to $LOCAL_OMARCHY_DIR..." | tee -a "$LOG_FILE"
 echo "This may take a moment..." | tee -a "$LOG_FILE"
-if cp -r "$OMARCHY_DIR"/* "$LOCAL_OMARCHY_DIR" >> "$LOG_FILE" 2>&1; then
+if run_as_user cp -r "$OMARCHY_DIR"/* "$LOCAL_OMARCHY_DIR" >> "$LOG_FILE" 2>&1; then
     echo "✓ Copied Omarchy files to $LOCAL_OMARCHY_DIR" | tee -a "$LOG_FILE"
 else
     echo "Error: Failed to copy Omarchy files to $LOCAL_OMARCHY_DIR" | tee -a "$LOG_FILE"
@@ -280,7 +304,7 @@ echo "This process may take 10-30 minutes depending on your system..." | tee -a 
 echo "All output is being logged to: $LOG_FILE" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
 
-bash install.sh 2>&1 | tee -a "$LOG_FILE"
+run_as_user bash install.sh 2>&1 | tee -a "$LOG_FILE"
 INSTALL_STATUS=${PIPESTATUS[0]}
 
 echo "" | tee -a "$LOG_FILE"
