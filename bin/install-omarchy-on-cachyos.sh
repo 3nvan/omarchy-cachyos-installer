@@ -199,10 +199,36 @@ else
     echo "✓ yay is already installed." | tee -a "$LOG_FILE"
 fi
 
-# Add omarchy repository to pacman.conf
-echo "Adding Omarchy repository to pacman.conf..." | tee -a "$LOG_FILE"
-echo -e "\n[omarchy]\nSigLevel = Optional TrustedOnly\nServer = https://pkgs.omarchy.org/\$arch" | sudo tee -a /etc/pacman.conf > /dev/null
+# Receive and trust Omarchy signing key
+echo "Receiving Omarchy signing key..." | tee -a "$LOG_FILE"
+sudo pacman-key --recv-keys F0134EE680CAC571 >> "$LOG_FILE" 2>&1
+sudo pacman-key --lsign-key F0134EE680CAC571 >> "$LOG_FILE" 2>&1
+
+# Add omarchy repository to pacman.conf (skip if already present)
+if ! grep -q '^\[omarchy\]' /etc/pacman.conf; then
+    echo "Adding Omarchy repository to pacman.conf..." | tee -a "$LOG_FILE"
+    echo -e "\n[omarchy]\nSigLevel = Optional TrustedOnly\nServer = https://pkgs.omarchy.org/\$arch" | sudo tee -a /etc/pacman.conf > /dev/null
+else
+    echo "✓ Omarchy repository already present in pacman.conf, skipping." | tee -a "$LOG_FILE"
+fi
 sudo pacman -Syu >> "$LOG_FILE" 2>&1
+
+# Remove CachyOS SDDM config if present
+if [ -f /etc/sddm.conf ]; then
+    echo "Removing CachyOS SDDM config..." | tee -a "$LOG_FILE"
+    sudo rm /etc/sddm.conf
+fi
+
+# Prompt for Omarchy user details
+echo "" | tee -a "$LOG_FILE"
+echo "Please enter your username:" | tee -a "$LOG_FILE"
+read -r OMARCHY_USER_NAME
+export OMARCHY_USER_NAME
+
+echo "" | tee -a "$LOG_FILE"
+echo "Please enter your email address:" | tee -a "$LOG_FILE"
+read -r OMARCHY_USER_EMAIL
+export OMARCHY_USER_EMAIL
 
 # Make adjustments to Omarchy install scripts to support CachyOS
 echo "" | tee -a "$LOG_FILE"
@@ -232,35 +258,75 @@ for file in "${!sed_removals[@]}"; do
     sed_remove_pattern "${sed_removals[$file]}" "$file"
 done
 
-# Add shell environment check to mise conditional in config/uwsm/env
-echo "Configuring shell environment..." | tee -a "$LOG_FILE"
-if [ -f config/uwsm/env ]; then
-    # Check if pattern exists before attempting replacement
-    if grep -q "if command -v mise &> /dev/null; then" config/uwsm/env; then
-        if sed -i 's/if command -v mise &> \/dev\/null; then/if [ "$SHELL" = "\/bin\/bash" ] \&\& command -v mise \&> \/dev\/null; then/' config/uwsm/env 2>/dev/null; then
-            echo "✓ Updated mise conditional in config/uwsm/env" | tee -a "$LOG_FILE"
-        else
-            echo "⚠ Failed to update config/uwsm/env" | tee -a "$LOG_FILE"
-        fi
-    else
-        echo "⚠ Pattern not found in config/uwsm/env (already updated?)" | tee -a "$LOG_FILE"
-    fi
-else
-    echo "⚠ File not found: config/uwsm/env" | tee -a "$LOG_FILE"
+# Also remove pacman.sh from post-install/all.sh (different pattern)
+if ! grep -q "run_logged \\\$OMARCHY_INSTALL/post-install/pacman" install/post-install/all.sh 2>/dev/null; then
+    sed -i '/run_logged \$OMARCHY_INSTALL\/post-install\/pacman/d' install/post-install/all.sh 2>/dev/null
+    echo "✓ Removed pacman from post-install/all.sh" | tee -a "$LOG_FILE"
 fi
 
-# Add fish shell support to mise activation in config/uwsm/env
-if [ -f config/uwsm/env ]; then
-    if grep -q 'eval "\$(mise activate bash)"' config/uwsm/env; then
-        sed -i '/eval "\$(mise activate bash)"/a\
-elif [ "$SHELL" = "/bin/fish" ] && command -v mise &> /dev/null; then\
-  mise activate fish | source' config/uwsm/env
-        echo "✓ Added fish shell support to config/uwsm/env" | tee -a "$LOG_FILE"
-    else
-        echo "⚠ Bash mise activation line not found in config/uwsm/env" | tee -a "$LOG_FILE"
+# Fix symlink to be idempotent on re-runs
+if [ -f install/config/omarchy-ai-skill.sh ]; then
+    sed -i 's/ln -s/ln -sf/' install/config/omarchy-ai-skill.sh 2>/dev/null
+    echo "✓ Made omarchy-ai-skill symlink idempotent" | tee -a "$LOG_FILE"
+fi
+
+# Patch omarchy-update-restart for CachyOS kernel detection
+if [ -f bin/omarchy-update-restart ]; then
+    sed -i "s/ | sed 's\/-arch\/\\\.arch\/'//" bin/omarchy-update-restart
+    sed -i "s/print \$2/print \$2 \"-\" \$1 | sed 's\/-linux\/\/'/" bin/omarchy-update-restart
+    sed -i '/linux-cachyos/ ! s/pacman -Q linux/pacman -Q linux-cachyos/' bin/omarchy-update-restart
+    echo "✓ Patched omarchy-update-restart for CachyOS kernel" | tee -a "$LOG_FILE"
+fi
+
+# Replace nvidia.sh with CachyOS 580xx driver logic
+if [ -f "../bin/nvidia.sh" ]; then
+    cp "../bin/nvidia.sh" install/config/hardware/nvidia.sh
+    chmod +x install/config/hardware/nvidia.sh
+    echo "✓ Installed CachyOS NVIDIA 580xx driver logic" | tee -a "$LOG_FILE"
+fi
+
+# Add wpa_supplicant fix and NetworkManager iwd config
+cat >> install/config/hardware/network.sh << 'NETEOF'
+
+# Disable wpa_supplicant to prevent conflict with iwd
+sudo systemctl disable --now wpa_supplicant.service 2>/dev/null
+
+# Configure NetworkManager to use iwd as its WiFi backend
+if ! grep -q "wifi.backend=iwd" /etc/NetworkManager/NetworkManager.conf 2>/dev/null; then
+  sudo tee -a /etc/NetworkManager/NetworkManager.conf > /dev/null << EOF
+
+[device]
+wifi.backend=iwd
+EOF
+fi
+NETEOF
+echo "✓ Added wpa_supplicant/iwd fix to network.sh" | tee -a "$LOG_FILE"
+
+# Pin walker to omarchy repo to prevent CachyOS version conflict
+if [ -f install/config/walker-elephant.sh ]; then
+    if ! grep -q "IgnorePkg.*walker" install/config/walker-elephant.sh 2>/dev/null; then
+        sed -i '1a\
+# Pin walker to omarchy repo to prevent CachyOS version conflict\
+if ! grep -q "^IgnorePkg.*walker" /etc/pacman.conf 2>/dev/null; then\
+  if grep -q "^IgnorePkg" /etc/pacman.conf; then\
+    sudo sed -i "s/^IgnorePkg = \\(.*\\)/IgnorePkg = \\1 walker/" /etc/pacman.conf\
+  else\
+    sudo sed -i "/^\\[options\\]/a IgnorePkg = walker" /etc/pacman.conf\
+  fi\
+fi' install/config/walker-elephant.sh
+        echo "✓ Pinned walker to omarchy repo" | tee -a "$LOG_FILE"
     fi
-else
-    echo "⚠ File not found: config/uwsm/env, skipping fish shell configuration." | tee -a "$LOG_FILE"
+fi
+
+# Update mise activation for both bash and fish
+echo "Configuring shell environment..." | tee -a "$LOG_FILE"
+if [ -f config/uwsm/env ]; then
+    if grep -q "mise activate bash" config/uwsm/env 2>/dev/null; then
+        sed -i 's/omarchy-cmd-present mise && eval "\$(mise activate bash)"/if [ "\$SHELL" = "\/bin\/bash" ] \&\& command -v mise \&> \/dev\/null; then\n  eval "$(mise activate bash)"\nelif [ "\$SHELL" = "\/bin\/fish" ] \&\& command -v mise \&> \/dev\/null; then\n  mise activate fish | source\nfi/' config/uwsm/env
+        echo "✓ Updated mise activate for bash/fish shell support" | tee -a "$LOG_FILE"
+    else
+        echo "⚠ Mise activation pattern not found in config/uwsm/env (already updated?)" | tee -a "$LOG_FILE"
+    fi
 fi
 
 # Copy omarchy installation files to ~/.local/share/omarchy
@@ -284,10 +350,13 @@ echo "The following adjustments have been completed."
 echo " 1. Added Omarchy repo to pacman.conf"
 echo " 2. Removed tldr from packages.sh to avoid conflict with tealdeer on CachyOS."
 echo " 3. Disabled further Omarchy changes to pacman.conf, preserving CachyOS settings."
-echo " 4. Removed nvidia.sh from install.sh to avoid conflict with CachyOS graphics driver installation."
+echo " 4. Replaced nvidia.sh with custom CachyOS 580xx Driver Logic."
 echo " 5. Removed plymouth.sh from install.sh to avoid conflict with CachyOS login display manager installation."
 echo " 6. Removed limine-snapper.sh from install.sh to avoid conflict with CachyOS boot loader installation."
 echo " 7. Removed alt-bootloaders.sh from install.sh to avoid conflict with CachyOS boot loader installation."
+echo " 8. Removed /etc/sddm.conf to avoid conflict with Omarchy UWSM session autologin."
+echo " 9. Disabled wpa_supplicant and configured NetworkManager to use iwd backend."
+echo "10. Pinned walker to omarchy repo to prevent CachyOS version conflict."
 echo ""
 echo "If no display manager is detected after installation, Plymouth with Hyprland login will be installed automatically."
 echo ""
