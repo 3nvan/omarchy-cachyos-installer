@@ -3,22 +3,20 @@
 set -o pipefail
 trap 'echo "Error: Script failed at line $LINENO" | tee -a "$LOG_FILE"; exit 1' ERR
 
-# Set up logging
-LOG_FILE="${HOME}/.local/share/omarchy/install.log"
-mkdir -p "$(dirname "$LOG_FILE")"
-
 # Detect if running as root via sudo
 if [ "$(id -u)" -eq 0 ]; then
     if [ -n "$SUDO_USER" ]; then
         ORIGINAL_USER="$SUDO_USER"
         ORIGINAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-        LOG_FILE="${ORIGINAL_HOME}/.local/share/omarchy/install.log"
-        mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
     else
         echo "Error: Run with sudo, not as root directly" >&2
         exit 1
     fi
 fi
+
+# Set up logging
+LOG_FILE="${ORIGINAL_HOME:-$HOME}/.local/share/omarchy/install.log"
+mkdir -p "$(dirname "$LOG_FILE")"
 
 # Run a command as the original user (no-op if not root)
 run_as_user() {
