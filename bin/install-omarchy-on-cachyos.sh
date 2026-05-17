@@ -278,13 +278,6 @@ if [ -f bin/omarchy-update-restart ]; then
     echo "✓ Patched omarchy-update-restart for CachyOS kernel" | tee -a "$LOG_FILE"
 fi
 
-# Replace nvidia.sh with CachyOS 580xx driver logic
-if [ -f "../bin/nvidia.sh" ]; then
-    cp "../bin/nvidia.sh" install/config/hardware/nvidia.sh
-    chmod +x install/config/hardware/nvidia.sh
-    echo "✓ Installed CachyOS NVIDIA 580xx driver logic" | tee -a "$LOG_FILE"
-fi
-
 # Add wpa_supplicant fix and NetworkManager iwd config
 cat >> install/config/hardware/network.sh << 'NETEOF'
 
@@ -350,13 +343,12 @@ echo "The following adjustments have been completed."
 echo " 1. Added Omarchy repo to pacman.conf"
 echo " 2. Removed tldr from packages.sh to avoid conflict with tealdeer on CachyOS."
 echo " 3. Disabled further Omarchy changes to pacman.conf, preserving CachyOS settings."
-echo " 4. Replaced nvidia.sh with custom CachyOS 580xx Driver Logic."
-echo " 5. Removed plymouth.sh from install.sh to avoid conflict with CachyOS login display manager installation."
-echo " 6. Removed limine-snapper.sh from install.sh to avoid conflict with CachyOS boot loader installation."
-echo " 7. Removed alt-bootloaders.sh from install.sh to avoid conflict with CachyOS boot loader installation."
-echo " 8. Removed /etc/sddm.conf to avoid conflict with Omarchy UWSM session autologin."
-echo " 9. Disabled wpa_supplicant and configured NetworkManager to use iwd backend."
-echo "10. Pinned walker to omarchy repo to prevent CachyOS version conflict."
+echo " 4. Removed plymouth.sh from install.sh to avoid conflict with CachyOS login display manager installation."
+echo " 5. Removed limine-snapper.sh from install.sh to avoid conflict with CachyOS boot loader installation."
+echo " 6. Removed alt-bootloaders.sh from install.sh to avoid conflict with CachyOS boot loader installation."
+echo " 7. Removed /etc/sddm.conf to avoid conflict with Omarchy UWSM session autologin."
+echo " 8. Disabled wpa_supplicant and configured NetworkManager to use iwd backend."
+echo " 9. Pinned walker to omarchy repo to prevent CachyOS version conflict."
 echo ""
 echo "If no display manager is detected after installation, Plymouth with Hyprland login will be installed automatically."
 echo ""
