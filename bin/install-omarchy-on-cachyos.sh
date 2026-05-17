@@ -153,17 +153,17 @@ if ! command -v yay &> /dev/null; then
     echo "Installing build dependencies..." | tee -a "$LOG_FILE"
     sudo pacman -S --needed --noconfirm git base-devel >> "$LOG_FILE" 2>&1 || { echo "Error: Failed to install build dependencies" | tee -a "$LOG_FILE"; exit 1; }
 
-    # Clean up any leftover directory from a previous run
-    rm -rf /tmp/yay
+    YAY_BUILD_DIR=$(mktemp -d)
 
     # Clone and build yay using helper function
-    git_clone_and_build "https://aur.archlinux.org/yay.git" "/tmp/yay" "makepkg -si --noconfirm" || {
+    git_clone_and_build "https://aur.archlinux.org/yay.git" "$YAY_BUILD_DIR" "makepkg -si --noconfirm" || {
         echo "Error: Failed to install yay." | tee -a "$LOG_FILE"
+        rm -rf "$YAY_BUILD_DIR"
         exit 1
     }
 
     # Clean up
-    rm -rf /tmp/yay
+    rm -rf "$YAY_BUILD_DIR"
 
     if ! command -v yay &> /dev/null; then
         echo "Error: yay installation verification failed." | tee -a "$LOG_FILE"
